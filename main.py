@@ -132,6 +132,134 @@ def calcular_fitness(individuo, p, r, ca_valor):
 # 🔍 SEÇÃO 3: PESSOA 3 - MÓDULO DE BUSCA LOCAL (MEMÉTICO / HILL CLIMBING)
 # ==============================================================================
 
+TURNOS_POSSIVEIS = [0, 1, 2, 3]  # 0 = Folga, 1 = Manhã, 2 = Tarde, 3 = Noite
+ 
+ 
+def gerar_vizinho_troca_turno(individuo):
+    """Move 1: muda o turno de UM professor em UM dia aleatório."""
+    vizinho = individuo.copy()
+    n_avaliadores, n_dias = vizinho.shape
+    a = random.randrange(n_avaliadores)
+    d = random.randrange(n_dias)
+    turno_atual = vizinho[a, d]
+    opcoes = [t for t in TURNOS_POSSIVEIS if t != turno_atual]
+    vizinho[a, d] = random.choice(opcoes)
+    return vizinho
+ 
+ 
+def gerar_vizinho_swap_professores(individuo):
+    """Move 2: troca os turnos entre DOIS professores no MESMO dia."""
+    vizinho = individuo.copy()
+    n_avaliadores, n_dias = vizinho.shape
+    if n_avaliadores < 2:
+        return vizinho
+    d = random.randrange(n_dias)
+    a1, a2 = random.sample(range(n_avaliadores), 2)
+    vizinho[a1, d], vizinho[a2, d] = vizinho[a2, d], vizinho[a1, d]
+    return vizinho
+ 
+ 
+def gerar_vizinho_swap_dias(individuo):
+    """Move 3: troca os turnos entre DOIS dias do MESMO professor.
+    Bom para 'consertar' folga excedente ou turno zumbi movendo o problema
+    de lugar sem violar a regra de 1 turno/dia."""
+    vizinho = individuo.copy()
+    n_avaliadores, n_dias = vizinho.shape
+    if n_dias < 2:
+        return vizinho
+    a = random.randrange(n_avaliadores)
+    d1, d2 = random.sample(range(n_dias), 2)
+    vizinho[a, d1], vizinho[a, d2] = vizinho[a, d2], vizinho[a, d1]
+    return vizinho
+ 
+ 
+def gerar_vizinho(individuo):
+    """Sorteia um dos 3 operadores de vizinhança e aplica."""
+    movimento = random.choice([
+        gerar_vizinho_troca_turno,
+        gerar_vizinho_swap_professores,
+        gerar_vizinho_swap_dias,
+    ])
+    return movimento(individuo)
+ 
+ 
+def hill_climbing_first_improvement(individuo, p, r, ca_valor,
+                                     max_iteracoes=200, max_vizinhos_por_iteracao=15):
+    """
+    Busca Local - estratégia FIRST-IMPROVEMENT.
+    A cada iteração, gera vizinhos até achar um MELHOR que o atual e já aceita.
+    Mais rápido, ótimo pra rodar em cima de muitos indivíduos do AG.
+    """
+    melhor = individuo.copy()
+    melhor_fitness = calcular_fitness(melhor, p, r, ca_valor)
+ 
+    for _ in range(max_iteracoes):
+        melhorou = False
+        for _ in range(max_vizinhos_por_iteracao):
+            vizinho = gerar_vizinho(melhor)
+            fit_vizinho = calcular_fitness(vizinho, p, r, ca_valor)
+            if fit_vizinho > melhor_fitness:
+                melhor = vizinho
+                melhor_fitness = fit_vizinho
+                melhorou = True
+                break
+        if not melhorou:
+            break  # nenhum vizinho testado melhorou -> ótimo local, para
+ 
+    return melhor, melhor_fitness
+ 
+ 
+def hill_climbing_best_improvement(individuo, p, r, ca_valor,
+                                    max_iteracoes=100, n_vizinhos=20):
+    """
+    Busca Local - estratégia BEST-IMPROVEMENT.
+    A cada iteração, gera N vizinhos e escolhe o MELHOR entre eles.
+    Mais lento, mas converge de forma mais "limpa" (bom pra comparar nos gráficos).
+    """
+    melhor = individuo.copy()
+    melhor_fitness = calcular_fitness(melhor, p, r, ca_valor)
+ 
+    for _ in range(max_iteracoes):
+        candidatos = [gerar_vizinho(melhor) for _ in range(n_vizinhos)]
+        fits = [calcular_fitness(c, p, r, ca_valor) for c in candidatos]
+        idx_max = int(np.argmax(fits))
+ 
+        if fits[idx_max] > melhor_fitness:
+            melhor = candidatos[idx_max]
+            melhor_fitness = fits[idx_max]
+        else:
+            break  # nenhum vizinho gerado melhorou -> ótimo local, para
+ 
+    return melhor, melhor_fitness
+ 
+ 
+def aplicar_busca_local_na_populacao(populacao, p, r, ca_valor,
+                                      taxa_aplicacao=0.2, estrategia="first", **kwargs):
+    """
+    🔗 PONTE COM O AG (Pessoa 2) -- é isso que transforma o AG num Memético.
+ 
+    populacao: lista de indivíduos (matrizes numpy), idealmente já ordenada
+               do melhor pro pior fitness
+    taxa_aplicacao: fração da população (a partir do topo/elite) que recebe
+                     o refinamento local. Esse é o hiperparâmetro que a
+                     Pessoa 4 vai variar (ex: 10%, 20%, 50%)
+    estrategia: "first" ou "best"
+    **kwargs: repassado pra função de hill climbing (max_iteracoes, etc.)
+    """
+    n_refinar = max(1, int(len(populacao) * taxa_aplicacao))
+    nova_populacao = []
+ 
+    funcao_hc = (hill_climbing_first_improvement if estrategia == "first"
+                 else hill_climbing_best_improvement)
+ 
+    for i, individuo in enumerate(populacao):
+        if i < n_refinar:
+            refinado, _ = funcao_hc(individuo, p, r, ca_valor, **kwargs)
+            nova_populacao.append(refinado)
+        else:
+            nova_populacao.append(individuo)
+ 
+    return nova_populacao
 
 
 # ==============================================================================
