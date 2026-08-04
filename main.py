@@ -7,6 +7,9 @@ from pulp import LpMaximize, LpProblem, LpVariable, lpSum
 import seaborn as sns
 from typing import List, Tuple
 from pulp import *
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib.colors import ListedColormap
 
 # ==============================================================================
 # 🧩 SEÇÃO 1: PESSOA 1 - CONFIGURAÇÃO DO PROBLEMA, PULP E FUNÇÃO DE FITNESS
@@ -964,7 +967,104 @@ def resumir_resultados(df: pd.DataFrame) -> pd.DataFrame:
 # 📊 SEÇÃO 5: PESSOA 5 - VISUALIZAÇÃO DE DADOS, DASHBOARD E SLIDES
 # ==============================================================================
 
+def plotar_curvas_convergencia(historico_puro, historico_memetico):
+    """
+    Plota as curvas de convergência (Gerações vs Fitness) comparando
+    o Algoritmo Genético Puro e o Algoritmo Memético.
+    """
+    plt.figure(figsize=(10, 6))
+    
+    plt.plot(historico_puro, label="AG Puro", color="#e74c3c", linewidth=2.5)
+    plt.plot(historico_memetico, label="AG Memético (com Busca Local)", 
+             color="#2ecc71", linewidth=2.5, linestyle="--")
+    
+    plt.title("Curva de Convergência: AG Puro vs AG Memético", fontsize=16, fontweight='bold')
+    plt.xlabel("Gerações", fontsize=12)
+    plt.ylabel("Fitness (Qualidade da Escala)", fontsize=12)
+    plt.legend(fontsize=12)
+    plt.grid(True, linestyle=':', alpha=0.7)
+    
+    plt.tight_layout()
+    plt.show()
 
+def plotar_heatmap_escala(individuo_final, avaliadores, dias):
+    """
+    Gera um gráfico de mapa de calor (heatmap) mostrando a tabela final da escala.
+    Substitui os números da matriz (0, 1, 2, 3) pelos nomes dos turnos.
+    """
+    plt.figure(figsize=(12, 7))
+    
+    # Cores: 0=Folga (Cinza claro), 1=Manhã (Amarelo), 2=Tarde (Laranja), 3=Noite (Roxo)
+    cmap = ListedColormap(['#ecf0f1', '#f1c40f', '#e67e22', '#9b59b6'])
+    nomes_turnos = ['Folga', 'Manhã', 'Tarde', 'Noite']
+    
+    # Gera o heatmap base usando a matriz do indivíduo final
+    ax = sns.heatmap(individuo_final, cmap=cmap, linewidths=1, linecolor='white',
+                     annot=True, cbar=False, fmt="d",
+                     xticklabels=[f"Dia {d}" for d in dias],
+                     yticklabels=avaliadores)
+    
+    plt.title("Dashboard Final da Escala dos Professores", fontsize=16, fontweight='bold', pad=15)
+    plt.xlabel("Dias", fontsize=12, labelpad=10)
+    plt.ylabel("Avaliadores", fontsize=12)
+    
+    # Mágica para trocar os números (0, 1, 2, 3) pelo texto no gráfico
+    for t in ax.texts:
+        valor = int(t.get_text())
+        t.set_text(nomes_turnos[valor])
+        t.set_fontsize(10)
+        t.set_fontweight('bold')
+        
+        # Ajusta a cor da fonte para ficar legível dependendo do fundo
+        if valor == 0:
+            t.set_color('#7f8c8d')  # Texto escuro para "Folga"
+        else:
+            t.set_color('white')    # Texto branco para os outros turnos
+    
+    plt.xticks(rotation=0)
+    plt.yticks(rotation=0)
+    plt.tight_layout()
+    plt.show()
+
+
+# ==============================================================================
+# 🚀 EXECUÇÃO PRINCIPAL (MAIN) - LIGAÇÃO DE TODAS AS PARTES
+# ==============================================================================
+
+if __name__ == "__main__":
+    print("Iniciando a resolução do Nurse Scheduling Problem (NSP)...")
+    
+    # 1. Carregar os parâmetros do cenário (Pessoa 1 / Pessoa 4)
+    avaliadores, dias, turnos, r, ca_valor, p = carregar_parametros_problema()
+    
+    # 2. Executar o Algoritmo Genético PURO (Pessoa 2)
+    print("\nExecutando Algoritmo Genético Puro...")
+    resultado_puro = rodar_experimento(
+        nome_cenario="Teste UFPB", avaliadores=avaliadores, dias=dias, 
+        turnos=turnos, r=r, ca_valor=ca_valor, p=p,
+        usar_memetico=False, numero_geracoes=80
+    )
+    
+    # 3. Executar o Algoritmo MEMÉTICO com Busca Local (Pessoa 3)
+    print("Executando Algoritmo Memético...")
+    resultado_memetico = rodar_experimento(
+        nome_cenario="Teste UFPB", avaliadores=avaliadores, dias=dias, 
+        turnos=turnos, r=r, ca_valor=ca_valor, p=p,
+        usar_memetico=True, numero_geracoes=80
+    )
+    
+    # 4. Gerar Gráficos e Dashboard (Pessoa 5)
+    print("\nGerando Dashboard Visual...")
+    
+    # Plota o comparativo
+    plotar_curvas_convergencia(
+        resultado_puro["historico_melhor"], 
+        resultado_memetico["historico_melhor"]
+    )
+    
+    # Plota a escala do melhor indivíduo encontrado pelo Memético
+    melhor_escala = resultado_memetico["melhor_individuo"]
+    plotar_heatmap_escala(melhor_escala, avaliadores, dias)
 
 # ==============================================================================
 # 🚀 EXECUÇÃO PRINCIPAL (MAIN)
