@@ -711,7 +711,254 @@ def aplicar_busca_local_na_populacao(populacao, p, r, ca_valor,
 # ⚙️ SEÇÃO 4: PESSOA 4 - ENGINE DE EXECUÇÃO, BENCHMARKS E EXPERIMENTOS
 # ==============================================================================
 
-
+def gerar_parametros_cenario(n_avaliadores: int, n_dias: int = 4, seed: int = None):
+    
+    """
+    Gera dinamicamente o conjunto de parâmetros (avaliadores, dias, turnos,
+    demanda r, carga máxima e matriz de preferências p) para QUALQUER tamanho
+    de cenário. É essa função que permite criar os cenários Pequeno/Médio/
+    Grande pedidos no trabalho, sem precisar reescrever tudo na mão como a
+    Pessoa 1 fez para o cenário fixo de 12 professores.
+    """
+    
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+ 
+    avaliadores = [f"Prof_{i}" for i in range(1, n_avaliadores + 1)]
+    dias = list(range(1, n_dias + 1))
+    turnos = [1, 2, 3]
+ 
+    # Demanda por turno escalada proporcionalmente ao tamanho do cenário
+    # (mantém uma fração parecida de gente trabalhando por turno/dia
+    # independente do cenário ser pequeno, médio ou grande)
+    r = {
+        1: max(1, round(n_avaliadores * 0.15)),  # manhã
+        2: max(1, round(n_avaliadores * 0.15)),  # tarde
+        3: max(1, round(n_avaliadores * 0.10)),  # noite
+    }
+ 
+    ca_valor = n_dias - 1  # garante ao menos 1 folga na semana
+ 
+    # Preferências: peso-base 5 com ruído normal, simulando perfis
+    # diferentes de avaliadores (uns preferem manhã, outros noite, etc.)
+    p = {}
+    for a in avaliadores:
+        for t in turnos:
+            for d in dias:
+                p[(a, t, d)] = int(np.clip(np.random.normal(5, 2), 0, 9))
+ 
+    return avaliadores, dias, turnos, r, ca_valor, p
+ 
+ 
+def definir_cenarios_padrao(n_dias: int = 4):
+    """
+    Define os 3 cenários oficiais do experimento científico do artigo:
+    Pequeno (10), Médio (20) e Grande (50 avaliadores).
+    Usa seed fixa (42) para que os cenários sejam reprodutíveis entre
+    todas as rodadas de teste.
+    """
+    return {
+        "Pequeno (10 profs)": gerar_parametros_cenario(10, n_dias=n_dias, seed=42),
+        "Médio (20 profs)": gerar_parametros_cenario(20, n_dias=n_dias, seed=42),
+        "Grande (50 profs)": gerar_parametros_cenario(50, n_dias=n_dias, seed=42),
+    }
+ 
+ 
+def rodar_experimento(
+    nome_cenario,
+    avaliadores, dias, turnos, r, ca_valor, p,
+    usar_memetico: bool = False,
+    taxa_mutacao: float = 0.05,
+    taxa_crossover: float = 0.80,
+    tipo_crossover: str = "2pontos",
+    tamanho_populacao: int = 100,
+    numero_geracoes: int = 150,
+    quantidade_elite: int = 2,
+    paciencia: int = 30,
+    taxa_aplicacao_busca_local: float = 0.2,
+    estrategia_busca_local: str = "first",
+    freq_busca_local: int = 10,   # a cada X gerações roda a busca local
+    seed: int = None,
+):
+    """
+    Executa UMA rodada completa do AG (puro ou memético, dependendo de
+    usar_memetico) e devolve um dicionário com todas as métricas
+    relevantes para comparação (fitness final, tempo, histórico de
+    convergência etc.).
+ 
+    Essa é a função "atômica" de experimento -- a bateria de testes
+    (executar_bateria_experimentos) só fica chamando ela várias vezes
+    variando os hiperparâmetros e os cenários.
+    """
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+ 
+    n_avaliadores = len(avaliadores)
+    n_dias = len(dias)
+ 
+    populacao = gerar_populacao_inicial(tamanho_populacao, n_avaliadores, n_dias)
+ 
+    melhor_individuo = None
+    melhor_fitness = float("-inf")
+    historico_melhor = []
+    historico_media = []
+    geracoes_sem_melhora = 0
+ 
+    tempo_inicio = time.time()
+    geracao = 0
+ 
+    for geracao in range(numero_geracoes):
+ 
+        fitness_populacao = np.array([
+            calcular_fitness(ind, p, r, ca_valor) for ind in populacao
+        ])
+ 
+        indice_melhor = int(np.argmax(fitness_populacao))
+        melhor_da_geracao = fitness_populacao[indice_melhor]
+        media_da_geracao = float(np.mean(fitness_populacao))
+ 
+        if melhor_da_geracao > melhor_fitness:
+            melhor_fitness = melhor_da_geracao
+            melhor_individuo = populacao[indice_melhor].copy()
+            geracoes_sem_melhora = 0
+        else:
+            geracoes_sem_melhora += 1
+ 
+        historico_melhor.append(melhor_fitness)
+        historico_media.append(media_da_geracao)
+ 
+        if geracoes_sem_melhora >= paciencia:
+            break
+ 
+        populacao = gerar_nova_populacao(
+            populacao, p, r, ca_valor,
+            taxa_mutacao=taxa_mutacao,
+            taxa_crossover=taxa_crossover,
+            tipo_crossover=tipo_crossover,
+            quantidade_elite=quantidade_elite,
+        )
+ 
+        # --- Etapa Memética: aplica busca local periodicamente (não em
+        # toda geração, pra não deixar o experimento lento demais) ---
+        if usar_memetico and (geracao % freq_busca_local == 0):
+            populacao_ordenada = sorted(
+                populacao,
+                key=lambda ind: calcular_fitness(ind, p, r, ca_valor),
+                reverse=True,
+            )
+            populacao = aplicar_busca_local_na_populacao(
+                populacao_ordenada, p, r, ca_valor,
+                taxa_aplicacao=taxa_aplicacao_busca_local,
+                estrategia=estrategia_busca_local,
+            )
+ 
+    tempo_total = time.time() - tempo_inicio
+ 
+    return {
+        "cenario": nome_cenario,
+        "n_avaliadores": n_avaliadores,
+        "memetico": usar_memetico,
+        "taxa_mutacao": taxa_mutacao,
+        "taxa_aplicacao_busca_local": taxa_aplicacao_busca_local if usar_memetico else np.nan,
+        "estrategia_busca_local": estrategia_busca_local if usar_memetico else None,
+        "melhor_fitness": melhor_fitness,
+        "geracoes_executadas": geracao + 1,
+        "tempo_execucao_s": tempo_total,
+        "melhor_individuo": melhor_individuo,
+        "historico_melhor": historico_melhor,
+        "historico_media": historico_media,
+    }
+ 
+ 
+def executar_bateria_experimentos(
+    cenarios: dict = None,
+    taxas_mutacao=(0.05, 0.20),
+    taxas_busca_local=(0.10, 0.50),
+    n_repeticoes: int = 3,
+    numero_geracoes: int = 150,
+    tamanho_populacao: int = 100,
+    verbose: bool = True,
+):
+    """
+    🔬 Núcleo científico do trabalho (o que dá "peso de artigo" pra ele).
+ 
+    Roda uma bateria de experimentos cruzando:
+      - Cenários (Pequeno / Médio / Grande)
+      - AG puro vs AG Memético (com busca local)
+      - Taxas de mutação (ex: 5% vs 20%)
+      - Taxas de aplicação de busca local (ex: 10% vs 50%) -- só p/ memético
+      - Repetições (pra calcular média/desvio-padrão e dar robustez
+        estatística aos resultados, já que o AG é estocástico)
+ 
+    Retorna um pandas.DataFrame "cru" (uma linha por execução), pronto
+    para ser resumido (resumir_resultados) e plotado pela Pessoa 5.
+    """
+    if cenarios is None:
+        cenarios = definir_cenarios_padrao()
+ 
+    resultados = []
+ 
+    for nome_cenario, (avaliadores, dias, turnos, r, ca_valor, p) in cenarios.items():
+ 
+        for taxa_mut in taxas_mutacao:
+ 
+            # --- AG PURO (baseline, sem busca local) ---
+            for rep in range(n_repeticoes):
+                res = rodar_experimento(
+                    nome_cenario, avaliadores, dias, turnos, r, ca_valor, p,
+                    usar_memetico=False,
+                    taxa_mutacao=taxa_mut,
+                    numero_geracoes=numero_geracoes,
+                    tamanho_populacao=tamanho_populacao,
+                    seed=rep,
+                )
+                res["repeticao"] = rep
+                resultados.append(res)
+ 
+            # --- AG MEMÉTICO (varia também a taxa de busca local) ---
+            for taxa_bl in taxas_busca_local:
+                for rep in range(n_repeticoes):
+                    res = rodar_experimento(
+                        nome_cenario, avaliadores, dias, turnos, r, ca_valor, p,
+                        usar_memetico=True,
+                        taxa_mutacao=taxa_mut,
+                        taxa_aplicacao_busca_local=taxa_bl,
+                        numero_geracoes=numero_geracoes,
+                        tamanho_populacao=tamanho_populacao,
+                        seed=rep,
+                    )
+                    res["repeticao"] = rep
+                    resultados.append(res)
+ 
+            if verbose:
+                print(f"[OK] Cenário '{nome_cenario}' | mutação={taxa_mut:.0%} concluído.")
+ 
+    df = pd.DataFrame(resultados)
+    return df
+ 
+ 
+def resumir_resultados(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Agrega os resultados brutos (uma linha por repetição) em estatísticas
+    (média, desvio-padrão, melhor caso, tempo médio) agrupadas por
+    configuração. Essa tabela resumida é a que entra no artigo/slide final,
+    e é o principal insumo pros gráficos comparativos da Pessoa 5.
+    """
+    colunas_grupo = [
+        "cenario", "memetico", "taxa_mutacao", "taxa_aplicacao_busca_local"
+    ]
+ 
+    resumo = df.groupby(colunas_grupo, dropna=False).agg(
+        fitness_medio=("melhor_fitness", "mean"),
+        fitness_desvio=("melhor_fitness", "std"),
+        fitness_maximo=("melhor_fitness", "max"),
+        tempo_medio_s=("tempo_execucao_s", "mean"),
+        geracoes_media=("geracoes_executadas", "mean"),
+    ).reset_index()
+ 
+    return resumo.sort_values(by="fitness_medio", ascending=False)
 
 # ==============================================================================
 # 📊 SEÇÃO 5: PESSOA 5 - VISUALIZAÇÃO DE DADOS, DASHBOARD E SLIDES
