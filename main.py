@@ -1,5 +1,4 @@
 import random
-import time
 import matplotlib.pyplot as plt
 import numpy as np
 import pulp
@@ -7,9 +6,11 @@ from pulp import LpMaximize, LpProblem, LpVariable, lpSum
 import seaborn as sns
 from typing import List, Tuple
 from pulp import *
+import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.colors import ListedColormap
+import time as tm
 
 # ==============================================================================
 # 🧩 SEÇÃO 1: PESSOA 1 - CONFIGURAÇÃO DO PROBLEMA, PULP E FUNÇÃO DE FITNESS
@@ -119,11 +120,19 @@ def calcular_fitness(individuo, p, r, ca_valor):
             if individuo[a_idx, d_idx] == 3 and individuo[a_idx, d_idx + 1] == 1:
                 penalidades += 1
 
-    # 4. Restrição IV: Carga Máxima (Folga Obrigatória)
+    # 4. Restrição IV: Carga Máxima e CARGA MÍNIMA (Nova Regra!)
+    min_dias = 2  # Cada avaliador tem que avaliar pelo menos 2 dias
+    
     for a_idx in range(n_avaliadores):
         dias_trabalhados = np.sum(individuo[a_idx, :] > 0)
+        
+        # Punição se trabalhou MAIS que o limite máximo (Exaustão)
         if dias_trabalhados > ca_valor:
             penalidades += (dias_trabalhados - ca_valor)
+            
+        # Punição se trabalhou MENOS que o limite mínimo (NOVA REGRA)
+        if dias_trabalhados < min_dias:
+            penalidades += (min_dias - dias_trabalhados)
 
     return satisfacao - (penalidades * PESO_PENALIDADE)
 
@@ -809,7 +818,7 @@ def rodar_experimento(
     historico_media = []
     geracoes_sem_melhora = 0
  
-    tempo_inicio = time.time()
+    tempo_inicio = tm.time()
     geracao = 0
  
     for geracao in range(numero_geracoes):
@@ -857,7 +866,7 @@ def rodar_experimento(
                 estrategia=estrategia_busca_local,
             )
  
-    tempo_total = time.time() - tempo_inicio
+    tempo_total = tm.time() - tempo_inicio
  
     return {
         "cenario": nome_cenario,
@@ -1031,6 +1040,64 @@ def plotar_heatmap_escala(individuo_final, avaliadores, dias):
 # 🚀 EXECUÇÃO PRINCIPAL (MAIN) - LIGAÇÃO DE TODAS AS PARTES
 # ==============================================================================
 
+
+def plotar_benchmarks_visuais(df_resumo):
+    """
+    Gera e salva gráficos comparativos da bateria de benchmarks.
+    """
+    df_plot = df_resumo.copy()
+
+    # Cria rótulos amigáveis para a legenda
+    def rotulo_config(row):
+        mut = f"Mut: {int(row['taxa_mutacao']*100)}%"
+        if not row['memetico']:
+            return f"AG Puro ({mut})"
+        bl = f"BL: {int(row['taxa_aplicacao_busca_local']*100)}%"
+        return f"Memético ({mut}, {bl})"
+
+    df_plot['Configuração'] = df_plot.apply(rotulo_config, axis=1)
+
+    # Definir paleta e ordem dos cenários
+    ordem_cenarios = ["Pequeno (10 profs)", "Médio (20 profs)", "Grande (50 profs)"]
+
+    # --- GRÁFICO 1: COMPARATIVO DE FITNESS (QUALIDADE) ---
+    plt.figure(figsize=(11, 6))
+    ax1 = sns.barplot(
+        data=df_plot, 
+        x='cenario', 
+        y='fitness_medio', 
+        hue='Configuração', 
+        order=ordem_cenarios,
+        palette='Blues_r'
+    )
+    plt.title("Comparativo de Qualidade (Fitness Médio) por Cenário e Configuração", fontsize=14, fontweight='bold', pad=15)
+    plt.xlabel("Tamanho do Cenário", fontsize=11, fontweight='bold')
+    plt.ylabel("Fitness Médio (Maior é melhor)", fontsize=11, fontweight='bold')
+    plt.legend(title="Configurações Avaliadas", bbox_to_anchor=(1.02, 1), loc='upper left')
+    plt.grid(True, linestyle=':', alpha=0.6)
+    plt.tight_layout()
+    plt.savefig("benchmark_fitness.png", dpi=300)
+    plt.show()
+
+    # --- GRÁFICO 2: COMPARATIVO DE TEMPO DE EXECUÇÃO ---
+    plt.figure(figsize=(11, 6))
+    ax2 = sns.barplot(
+        data=df_plot, 
+        x='cenario', 
+        y='tempo_medio_s', 
+        hue='Configuração', 
+        order=ordem_cenarios,
+        palette='Reds_r'
+    )
+    plt.title("Custo Computacional: Tempo Médio de Execução (Segundos)", fontsize=14, fontweight='bold', pad=15)
+    plt.xlabel("Tamanho do Cenário", fontsize=11, fontweight='bold')
+    plt.ylabel("Tempo Médio (s)", fontsize=11, fontweight='bold')
+    plt.legend(title="Configurações Avaliadas", bbox_to_anchor=(1.02, 1), loc='upper left')
+    plt.grid(True, linestyle=':', alpha=0.6)
+    plt.tight_layout()
+    plt.savefig("benchmark_tempo.png", dpi=300)
+    plt.show()
+
 if __name__ == "__main__":
     print("Iniciando a resolução do Nurse Scheduling Problem (NSP)...")
     
@@ -1066,7 +1133,43 @@ if __name__ == "__main__":
     melhor_escala = resultado_memetico["melhor_individuo"]
     plotar_heatmap_escala(melhor_escala, avaliadores, dias)
 
-# ==============================================================================
-# 🚀 EXECUÇÃO PRINCIPAL (MAIN)
-# ==============================================================================
+    # ==============================================================================
+    # ⏱️ EXECUTANDO BENCHMARKS 
+    # ==============================================================================
+    print("\n" + "="*60)
+    print("🚀 INICIANDO BATERIA DE BENCHMARKS")
+    print("Isso pode levar alguns instantes...")
+    print("="*60)
+
+    # 1. Carrega os 3 cenários do artigo (Pequeno, Médio e Grande)
+    cenarios_benchmark = definir_cenarios_padrao(n_dias=4)
+
+    # 2. Executa a bateria de testes
+    # Dica: Reduzi o número de repetições e gerações aqui para rodar rápido e você ver funcionando.
+    # Quando for gerar o resultado final pro professor, aumente n_repeticoes para 5 ou 10 e numero_geracoes para 150.
+    df_resultados_brutos = executar_bateria_experimentos(
+        cenarios=cenarios_benchmark,
+        taxas_mutacao=(0.05, 0.20),
+        taxas_busca_local=(0.10, 0.50),
+        n_repeticoes=2,           # Aumente depois para estatísticas melhores
+        numero_geracoes=50,       # Aumente para convergir melhor
+        tamanho_populacao=40,
+        verbose=True              # Vai avisando no terminal cada cenário que termina
+    )
+
+    # 3. Resume os resultados calculando médias, desvios e tempos
+    df_resumo = resumir_resultados(df_resultados_brutos)
+
+    # 4. Configura o Pandas para não esconder nenhuma coluna e imprime a tabela
+    import pandas as pd
+    pd.set_option('display.max_columns', None)  # Mostra todas as colunas
+    pd.set_option('display.width', 1000)        # Evita que a tabela quebre em várias linhas no terminal
+    
+    print("\n📊 TABELA FINAL DE RESULTADOS DO BENCHMARK:")
+    print("-" * 100)
+    print(df_resumo.to_string(index=False))     # to_string(index=False) remove aquela coluna de números à esquerda
+    print("-" * 100)
+
+    # 5. Gerar Gráficos dos Benchmarks
+    plotar_benchmarks_visuais(df_resumo)
 
