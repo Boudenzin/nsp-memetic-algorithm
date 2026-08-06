@@ -1,5 +1,4 @@
 import random
-import time
 import matplotlib.pyplot as plt
 import numpy as np
 import pulp
@@ -10,6 +9,7 @@ from pulp import *
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.colors import ListedColormap
+import time
 
 # ==============================================================================
 # 🧩 SEÇÃO 1: PESSOA 1 - CONFIGURAÇÃO DO PROBLEMA, PULP E FUNÇÃO DE FITNESS
@@ -119,11 +119,19 @@ def calcular_fitness(individuo, p, r, ca_valor):
             if individuo[a_idx, d_idx] == 3 and individuo[a_idx, d_idx + 1] == 1:
                 penalidades += 1
 
-    # 4. Restrição IV: Carga Máxima (Folga Obrigatória)
+    # 4. Restrição IV: Carga Máxima e CARGA MÍNIMA (Nova Regra!)
+    min_dias = 2  # Cada avaliador tem que avaliar pelo menos 2 dias
+    
     for a_idx in range(n_avaliadores):
         dias_trabalhados = np.sum(individuo[a_idx, :] > 0)
+        
+        # Punição se trabalhou MAIS que o limite máximo (Exaustão)
         if dias_trabalhados > ca_valor:
             penalidades += (dias_trabalhados - ca_valor)
+            
+        # Punição se trabalhou MENOS que o limite mínimo (NOVA REGRA)
+        if dias_trabalhados < min_dias:
+            penalidades += (min_dias - dias_trabalhados)
 
     return satisfacao - (penalidades * PESO_PENALIDADE)
 
@@ -1066,7 +1074,43 @@ if __name__ == "__main__":
     melhor_escala = resultado_memetico["melhor_individuo"]
     plotar_heatmap_escala(melhor_escala, avaliadores, dias)
 
+    # ==============================================================================
+    # ⏱️ EXECUTANDO BENCHMARKS 
+    # ==============================================================================
+    print("\n" + "="*60)
+    print("🚀 INICIANDO BATERIA DE BENCHMARKS")
+    print("Isso pode levar alguns instantes...")
+    print("="*60)
+
+    # 1. Carrega os 3 cenários do artigo (Pequeno, Médio e Grande)
+    cenarios_benchmark = definir_cenarios_padrao(n_dias=4)
+
+    # 2. Executa a bateria de testes
+    # Dica: Reduzi o número de repetições e gerações aqui para rodar rápido e você ver funcionando.
+    # Quando for gerar o resultado final pro professor, aumente n_repeticoes para 5 ou 10 e numero_geracoes para 150.
+    df_resultados_brutos = executar_bateria_experimentos(
+        cenarios=cenarios_benchmark,
+        taxas_mutacao=(0.05, 0.20),
+        taxas_busca_local=(0.10, 0.50),
+        n_repeticoes=2,           # Aumente depois para estatísticas melhores
+        numero_geracoes=50,       # Aumente para convergir melhor
+        tamanho_populacao=40,
+        verbose=True              # Vai avisando no terminal cada cenário que termina
+    )
+
+    # 3. Resume os resultados calculando médias, desvios e tempos
+    df_resumo = resumir_resultados(df_resultados_brutos)
+
+    # 4. Configura o Pandas para não esconder nenhuma coluna e imprime a tabela
+    import pandas as pd
+    pd.set_option('display.max_columns', None)  # Mostra todas as colunas
+    pd.set_option('display.width', 1000)        # Evita que a tabela quebre em várias linhas no terminal
+    
+    print("\n📊 TABELA FINAL DE RESULTADOS DO BENCHMARK:")
+    print("-" * 100)
+    print(df_resumo.to_string(index=False))     # to_string(index=False) remove aquela coluna de números à esquerda
+    print("-" * 100)
+
 # ==============================================================================
 # 🚀 EXECUÇÃO PRINCIPAL (MAIN)
 # ==============================================================================
-
